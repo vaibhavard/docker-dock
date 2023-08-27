@@ -1,0 +1,23 @@
+Q1: Andrew is free from 11 am to 3 pm, Joanne is free from noon to 2 pm and then 3:30 pm to 5 pm. Hannah is available at noon for half an hour, and then 4 pm to 6 pm. What are some options for start times for a 30 minute meeting for Andrew, Hannah, and Joanne?
+A1: 12 PM
+R1: Reliable solvable with Bing Precise.
+
+Q2: In my kitchen there's a table with a cup with a ball inside. I moved the cup to my bed in my bedroom and turned the cup upside down. I grabbed the cup again and moved to the main room. Where's the ball now?
+A2: On the bed/floor in the bedroom.
+
+Q3: In a run, what position am I in if I ran pass the 2nd?
+A3: 2nd
+
+Q4: I have a bookshelf in my living room with five books in it. The books are arranged from left to right. The position are always relative to the current bookshelf. After a gap is created, it is closed by shifting the books together. The arrangement is red, blue, green, yellow and black. I take the third book and put it on my coffee table. Then I take the book that is now in the fourth book position and put it to the right of the second book. Then I take the first book and put it to the right of the fourth book. What color is the second book in the bookshelf?
+
+A4:
+Initial state: 
+red, blue, green, yellow, black
+Removing third book: 
+red, blue, yellow, black
+Shifting fourth book:
+red, blue, black, yellow
+Shifting first book:
+blue, black, yellow, red
+Answer: black
+R4: Not always solved correctly by GPT-4.
