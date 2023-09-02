@@ -5,12 +5,9 @@ import { FastifySSEPlugin } from '@waylaidwanderer/fastify-sse-v2';
 import fs from 'fs';
 import { pathToFileURL } from 'url';
 import { KeyvFile } from 'keyv-file';
-import dotenv from 'dotenv';
 import ChatGPTClient from '../src/ChatGPTClient.js';
 import ChatGPTBrowserClient from '../src/ChatGPTBrowserClient.js';
 import BingAIClient from '../src/BingAIClient.js';
-
-dotenv.config('.env');
 
 const arg = process.argv.find(_arg => _arg.startsWith('--settings'));
 const path = arg?.split('=')[1] ?? './settings.js';
@@ -52,19 +49,7 @@ await server.register(cors, {
     origin: '*',
 });
 
-server.get('/ping', () => Date.now().toString());
-
-if (process.env.ENABLE_IP_WHITELIST === 'true') {
-    const allowedIps = process.env.ALLOWED_IPS.split(',');
-    server.addHook('preHandler', (request, reply, done) => {
-        const { ip } = request;
-        if (allowedIps.includes(ip)) {
-            done();
-        } else {
-            reply.code(403).send({ error: 'Forbidden' });
-        }
-    });
-}
+server.get('/', () => Date.now().toString());
 
 server.post('/conversation', async (request, reply) => {
     const body = request.body || {};
@@ -172,38 +157,6 @@ server.post('/conversation', async (request, reply) => {
     }
     return reply.code(code).send({ error: message });
 });
-
-server.delete('/conversation/:messageId', (request, reply) => {
-    const { messageId } = request.params;
-    const error = deleteConversation(messageId);
-    if (error) {
-        reply.code(500).send(error);
-    } else {
-        reply.code(200).send('Conversation deleted');
-    }
-});
-
-function deleteConversation(messageId) {
-    const cache = JSON.parse(fs.readFileSync('cache.json', 'utf8'));
-    const cacheArray = cache.cache;
-    let index = -1;
-    let result;
-    for (let i = 0; i < cacheArray.length; i++) {
-        if (cacheArray[i][0] === messageId) {
-            index = i;
-            break;
-        }
-    }
-
-    try {
-        if (index === -1) throw new Error('Message not found');
-        cacheArray.splice(index, 1);
-        fs.writeFileSync('cache.json', JSON.stringify(cache), 'utf8');
-    } catch (err) {
-        result = err;
-    }
-    return result;
-}
 
 server.listen({
     port: settings.apiOptions?.port || settings.port || 3000,
