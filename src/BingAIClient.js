@@ -539,6 +539,12 @@ export default class BingAIClient {
                             });
                             return;
                         }
+                        if (messages[0]?.messageType === 'InternalLoaderMessage'
+                            || messages[0]?.messageType === 'InternalSearchQuery'
+                            || messages[0]?.messageType === 'InternalSearchResult'
+                            || messages[0]?.messageType === 'GenerateContentQuery') {
+                            return;
+                        }
                         const updatedText = messages[0].text;
                         if (!updatedText || updatedText === replySoFar) {
                             return;
