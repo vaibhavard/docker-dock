@@ -565,8 +565,7 @@ export default class BingAIClient {
                         'iyjbexp',
                         'izfstprmpt',
                         'eredirecturl',
-                        'nojbfedge', // Not included in standard message, but won't work without.
-                        'nosearchall',
+                        'nojbfedge', // Not included in standard message, but won't work without.'nosearchall',
                     ],
                     allowedMessageTypes: [
                         'ActionRequest',
