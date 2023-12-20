@@ -532,7 +532,8 @@ export default class BingAIClient {
             arguments: [
                 {
                     source: 'cib',
-                    optionsSets: [
+                    optionsSets: message.includes('[nowebsearch]') // Check if the message contains "[nowebsearch]"
+                    ? [ // If yes, use these optionsSets
                         'nlu_direct_response_filter',
                         'deepleo',
                         'disable_emoji_spoken_text',
@@ -566,6 +567,42 @@ export default class BingAIClient {
                         'izfstprmpt',
                         'eredirecturl',
                         'nojbfedge', // Not included in standard message, but won't work without.'nosearchall',
+                    ]
+                    :  [ // If yes, use these optionsSets
+                    'nlu_direct_response_filter',
+                    'deepleo',
+                    'disable_emoji_spoken_text',
+                    'responsible_ai_policy_235',
+                    'enablemm',
+                    'dv3sugg',
+                    'machine_affinity',
+                    // "autosave",
+                    'iyxapbing',
+                    'iycapbing',
+                    toneOption,
+                    'clgalileo',
+                    ...((toneStyle === 'creative' && this.options.features.genImage) ? ['gencontentv3'] : []),
+                    'uquopt',
+                    'jbfv203',
+                    // 'streamw',
+                    // "savemem",
+                    // "savememfilter",
+                    'uprofgen',
+                    'uprofupd',
+                    'cpcandi',
+                    'cpcatral3',
+                    'cpcatro50',
+                    'cpcfmql',
+                    'cpcgnddi',
+                    'cpcmattr1',
+                    'cpcmcit1',
+                    'e2ecacheread',
+                    'nocitpass',
+                    'iyjbexp',
+                    'izfstprmpt',
+                    'eredirecturl',
+                    'nojbfedge', // Not included in standard message, but won't work without.
+                    'nosearchall',
                     ],
                     allowedMessageTypes: [
                         'ActionRequest',
