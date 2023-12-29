@@ -110,7 +110,7 @@ export default {
     // Options for the API server
     apiOptions: {
         port: 3000,
-        host: 'localhost',
+        host: '0.0.0.0',
         // (Optional) Set to true to enable `console.debug()` logging
         debug: true,
         // (Optional) Possible options: "chatgpt", "chatgpt-browser", "bing", "localLLM". (Default: "chatgpt")
