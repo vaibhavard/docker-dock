@@ -5,9 +5,13 @@ import { FastifySSEPlugin } from '@waylaidwanderer/fastify-sse-v2';
 import fs from 'fs';
 import { pathToFileURL } from 'url';
 import { KeyvFile } from 'keyv-file';
+import dotenv from 'dotenv';
 import ChatGPTClient from '../src/ChatGPTClient.js';
 import ChatGPTBrowserClient from '../src/ChatGPTBrowserClient.js';
 import BingAIClient from '../src/BingAIClient.js';
+import LocalLLMClient from '../src/LocalLLMClient.js';
+
+dotenv.config('.env');
 
 const arg = process.argv.find(_arg => _arg.startsWith('--settings'));
 const path = arg?.split('=')[1] ?? './settings.js';
@@ -60,6 +64,11 @@ server.post('/conversation', async (request, reply) => {
             abortController.abort();
         }
     });
+    if (process.env.USE_PASSWORD === 'true') {
+        if (process.env.PASSWORD !== body.password) {
+            return reply.code(403).send({ error: 'Include the correct password in your request.' });
+        }
+    }
 
     let onProgress;
     if (body.stream === true) {
@@ -87,38 +96,52 @@ server.post('/conversation', async (request, reply) => {
             // noinspection ExceptionCaughtLocallyJS
             throw invalidError;
         }
-
-        let clientToUseForMessage = clientToUse;
+        let clientToUseForMessage ='bing';
         const clientOptions = filterClientOptions(body.clientOptions, clientToUseForMessage);
         if (clientOptions && clientOptions.clientToUse) {
             clientToUseForMessage = clientOptions.clientToUse;
             delete clientOptions.clientToUse;
         }
 
-        let { shouldGenerateTitle } = body;
-        if (typeof shouldGenerateTitle !== 'boolean') {
-            shouldGenerateTitle = settings.apiOptions?.generateTitles || false;
-        }
-
         const messageClient = getClient(clientToUseForMessage);
-
-        result = await messageClient.sendMessage(body.message, {
-            jailbreakConversationId: body.jailbreakConversationId,
+        const {
+            context,
+            shouldGenerateTitle,
+            clientId,
+            conversationSignature,
+            imageBase64,
+            imageURL,
+            invocationId,
+            jailbreakConversationId,
+            toneStyle,
+            modelVersion,
+            systemMessage,
+            showSuggestions,
+            useBase64,
+            plugins,
+        } = body;
+        const messageOptions = {
             conversationId: body.conversationId ? body.conversationId.toString() : undefined,
             parentMessageId: body.parentMessageId ? body.parentMessageId.toString() : undefined,
-            systemMessage: body.systemMessage,
-            context: body.context,
-            conversationSignature: body.conversationSignature,
-            clientId: body.clientId,
-            invocationId: body.invocationId,
-            shouldGenerateTitle, // only used for ChatGPTClient
-            toneStyle: body.toneStyle,
             clientOptions,
-            imageURL: body?.imageURL,
-            imageBase64: body?.imageBase64,
+            ...(clientToUseForMessage === 'chatgpt' && { context }),
+            ...(clientToUseForMessage === 'chatgpt' && { shouldGenerateTitle }),
+            ...(clientToUseForMessage === 'bing' && { clientId }),
+            ...(clientToUseForMessage === 'bing' && { conversationSignature }),
+            ...(clientToUseForMessage === 'bing' && { imageBase64 }),
+            ...(clientToUseForMessage === 'bing' && { imageURL }),
+            ...(clientToUseForMessage === 'bing' && { invocationId }),
+            ...(clientToUseForMessage === 'bing' && { jailbreakConversationId }),
+            ...(clientToUseForMessage === 'bing' && { toneStyle }),
+            ...(clientToUseForMessage === 'bing' && { modelVersion }),
+            ...(clientToUseForMessage === 'bing' && { systemMessage }),
+            ...(clientToUseForMessage === 'bing' && { showSuggestions }),
+            ...(clientToUseForMessage === 'bing' && { useBase64 }),
+            ...(clientToUseForMessage === 'bing' && { plugins }),
             onProgress,
             abortController,
-        });
+        };
+        result = await messageClient.sendMessage(body.message, messageOptions);
     } catch (e) {
         error = e;
     }
@@ -158,8 +181,40 @@ server.post('/conversation', async (request, reply) => {
     return reply.code(code).send({ error: message });
 });
 
+server.delete('/conversation/:cacheKey', (request, reply) => {
+    const { cacheKey } = request.params;
+    const error = deleteConversation(cacheKey);
+    if (error) {
+        reply.code(500).send(error);
+    } else {
+        reply.code(200).send('Conversation deleted');
+    }
+});
+
+function deleteConversation(cacheKey) {
+    const cache = JSON.parse(fs.readFileSync('cache.json', 'utf8'));
+    const cacheArray = cache.cache;
+    let index = -1;
+    let result;
+    for (let i = 0; i < cacheArray.length; i++) {
+        if (cacheArray[i][0] === cacheKey) {
+            index = i;
+            break;
+        }
+    }
+
+    try {
+        if (index === -1) throw new Error('Message not found');
+        cacheArray.splice(index, 1);
+        fs.writeFileSync('cache.json', JSON.stringify(cache), 'utf8');
+    } catch (err) {
+        result = err;
+    }
+    return result;
+}
+
 server.listen({
-    port: settings.apiOptions?.port || settings.port || 3000,
+    port: process.env?.PORT || settings.apiOptions?.port || settings.port || 3000,
     host: settings.apiOptions?.host || 'localhost',
 }, (error) => {
     if (error) {
@@ -185,6 +240,11 @@ function getClient(clientToUseForMessage) {
             return new ChatGPTClient(
                 settings.openaiApiKey || settings.chatGptClient.openaiApiKey,
                 settings.chatGptClient,
+                settings.cacheOptions,
+            );
+        case 'localLLM':
+            return new LocalLLMClient(
+                settings.localLLMClient,
                 settings.cacheOptions,
             );
         default:
