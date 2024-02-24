@@ -54,256 +54,6 @@ export default class BingAIClient {
         }
     }
 
-    static getValidIPv4(ip) {
-        const match = !ip
-            || ip.match(/^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(\/([0-9]|[1-2][0-9]|3[0-2]))?$/);
-        if (match) {
-            if (match[5]) {
-                const mask = parseInt(match[5], 10);
-                let [a, b, c, d] = ip.split('.').map(x => parseInt(x, 10));
-                // eslint-disable-next-line no-bitwise
-                const max = (1 << (32 - mask)) - 1;
-                const rand = Math.floor(Math.random() * max);
-                d += rand;
-                c += Math.floor(d / 256);
-                d %= 256;
-                b += Math.floor(c / 256);
-                c %= 256;
-                a += Math.floor(b / 256);
-                b %= 256;
-                return `${a}.${b}.${c}.${d}`;
-            }
-            return ip;
-        }
-        return undefined;
-    }
-
-    async createNewConversation() {
-        this.headers = {
-            accept: 'application/json',
-            'accept-language': 'en-US,en;q=0.9',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36 Edg/113.0.1774.50',
-            cookie: this.options.cookies || (this.options.userToken ? `_U=${this.options.userToken}` : undefined),
-            Referer: 'https://www.bing.com/search?q=Bing+AI&showconv=1',
-            'Referrer-Policy': 'origin-when-cross-origin',
-            // Workaround for request being blocked due to geolocation
-            // 'x-forwarded-for': '1.1.1.1', // 1.1.1.1 seems to no longer work.
-            ...(this.options.xForwardedFor ? { 'x-forwarded-for': this.options.xForwardedFor } : {}),
-        };
-        // filter undefined values
-        this.headers = Object.fromEntries(
-            Object.entries(this.headers)
-                .filter(([, value]) => value !== undefined),
-        );
-
-        const fetchOptions = {
-            headers: this.headers,
-        };
-        if (this.options.proxy) {
-            fetchOptions.dispatcher = new ProxyAgent(this.options.proxy);
-        } else {
-            fetchOptions.dispatcher = new Agent({ connect: { timeout: 30_000 } });
-        }
-        const turingCreateURL = new URL(`${this.options.host}/turing/conversation/create`);
-        const searchParams = new URLSearchParams({
-            bundleVersion: '1.1366.4',
-        });
-        turingCreateURL.search = searchParams.toString();
-        const response = await fetch(turingCreateURL, fetchOptions);
-        const bodyString = await response.text();
-        try {
-            const body = JSON.parse(bodyString);
-            body.conversationSignature = response.headers.get('x-sydney-encryptedconversationsignature');
-            return body;
-        } catch (err) {
-            throw new Error('/turing/conversation/create: failed to parse response body.\n');
-        }
-    }
-
-    /**
-     * Method to obtain a new cookie as an anonymous user. Excessive use may result in a temporary IP ban, so a usual user cookie should be preferred.
-     * However to remedy a potential temporary ban you may delete the "ANON" cookie in the browser storage.
-     * @returns A new cookie. May however be less usable than a regular cookie.
-     */
-    static async getNewCookie() {
-        try {
-            const response = await fetch('https://www.bing.com/turing/conversation/create', { method: 'GET' });
-            const header = response.headers.get('set-cookie');
-            const cookieValue = header.match(/MUIDB=([^;]+)/) ? header.match(/MUIDB=([^;]+)/)[1] : undefined;
-            return cookieValue;
-        } catch (error) {
-            console.error(error);
-        }
-        return undefined;
-    }
-
-    /**
-     * Method to obtain base64 string of the image from the supplied URL.
-     * To be used when uploading an image for image recognition.
-     * @param {string} imageUrl URL of the image to convert to base64 string.
-     * @returns Base64 string of the image from the supplied URL.
-     */
-    static async getBase64FromImageUrl(imageUrl) {
-        let base64String;
-        try {
-            const response = await fetch(imageUrl, { method: 'GET' });
-            if (response.ok) {
-                const imageBlob = await response.blob();
-                const arrayBuffer = await imageBlob.arrayBuffer();
-                const buffer = Buffer.from(arrayBuffer);
-                base64String = buffer.toString('base64');
-            } else {
-                throw new Error(`HTTP error! Error: ${response.error}, Status: ${response.status}`);
-            }
-        } catch (error) {
-            console.error(error);
-        }
-        return base64String;
-    }
-
-    /**
-     * Method to upload image to blob storage to later be incorporated in the user message.
-     * The returned "blobId" is used in the originalImageUrl like this:
-     * imageUrl:    'https://www.bing.com/images/blob?bcid=RN4.o2iFDe0FQHyYKZKmmOyc4Fs-.....-A'
-     * The returned "processBlobId" is used in the imageUrl like this:
-     * originalImageUrl:            'https://www.bing.com/images/blob?bcid=RH8TZGRI5-0FQHyYKZKmmOyc4Fs-.....zQ'
-     * @param {string} imageBase64 The base64 string of the image to upload to blob storage.
-     * @returns {object} An object containing the "blobId" and "processBlobId" for the image.
-     */
-    async uploadImage(imageBase64) {
-        let data;
-        try {
-            const knowledgeRequestBody = {
-                imageInfo: {},
-                knowledgeRequest: {
-                    invokedSkills: ['ImageById'],
-                    subscriptionId: 'Bing.Chat.Multimodal',
-                    invokedSkillsRequestData: { enableFaceBlur: true }, // enableFaceBlur has to be enabled, or you won't get a processBlobId
-                    convoData: { convoid: '', convotone: 'Creative' }, // convoId seems to be irrelevant
-                },
-            };
-
-            const body = '------WebKitFormBoundary\r\n'
-            + 'Content-Disposition: form-data; name="knowledgeRequest"\r\n\r\n'
-            + `${JSON.stringify(knowledgeRequestBody)}\r\n`
-            + '------WebKitFormBoundary\r\n'
-            + 'Content-Disposition: form-data; name="imageBase64"\r\n\r\n'
-            + `${imageBase64}\r\n`
-            + '------WebKitFormBoundary--\r\n';
-
-            const response = await fetch('https://www.bing.com/images/kblob', {
-                headers: {
-                    accept: '*/*',
-                    'content-type': 'multipart/form-data; boundary=----WebKitFormBoundary',
-                    cookie: this.options.cookies || `_U=${this.options.userToken}`,
-                    Referer: 'https://www.bing.com/search?q=Bing+AI&showconv=1&FORM=hpcodx',
-                    'Referrer-Policy': 'origin-when-cross-origin',
-                },
-                body,
-                method: 'POST',
-            });
-            if (response.ok) {
-                data = await response.json();
-            } else {
-                throw new Error(`HTTP error! Error: ${response.error}, Status: ${response.status}`);
-            }
-        } catch (error) {
-            console.error(error);
-        }
-
-        return data;
-    }
-
-    /**
-     * Resolves the ids of the plugins and returns an array to be used for the request.
-     * @param {Object} plugins Object containing the plugins to use as strings.
-     * @returns The resolved array as it should be used in a request.
-     */
-    static async #resolvePlugins(plugins) {
-        const pluginLookup = {
-            instacart: '46664d33-1591-4ce8-b3fb-ba1022b66c11',
-            kayak: 'd6be744c-2bd9-432f-95b7-76e103946e34',
-            klarna: '5f143ea3-8c80-4efd-9515-185e83b7cf8a',
-            openTable: '543a7b1b-ebc6-46f4-be76-00c202990a1b',
-            shop: '39e3566a-d481-4d99-82b2-6d739b1e716e',
-        };
-        let resolvedPlugins = [];
-        if (plugins) {
-            const keys = Object.keys(plugins);
-            const filteredPlugins = keys.filter(key => plugins[key]);
-            for (const plugin of filteredPlugins) {
-                const id = pluginLookup[plugin];
-                if (id) {
-                    resolvedPlugins.push({ id });
-                }
-            }
-        } else {
-            resolvedPlugins = [];
-        }
-
-        return resolvedPlugins;
-    }
-
-    async createWebSocketConnection(conversationSignature) {
-        return new Promise((resolve, reject) => {
-            const ws = new WebSocket(
-                `wss://sydney.bing.com/sydney/ChatHub?sec_access_token=${encodeURIComponent(conversationSignature)}`,
-                { headers: this.headers },
-            );
-
-            ws.on('error', err => reject(err));
-
-            ws.on('open', () => {
-                if (this.debug) {
-                    console.debug('performing handshake');
-                }
-                ws.send('{"protocol":"json","version":1}\u001E');
-            });
-
-            ws.on('close', () => {
-                if (this.debug) {
-                    console.debug('disconnected');
-                }
-            });
-
-            ws.on('message', (data) => {
-                const objects = data.toString().split('\u001E');
-                const messages = objects.map((object) => {
-                    try {
-                        return JSON.parse(object);
-                    } catch (error) {
-                        return object;
-                    }
-                }).filter(message => message);
-                if (messages.length === 0) {
-                    return;
-                }
-                if (typeof messages[0] === 'object' && Object.keys(messages[0]).length === 0) {
-                    if (this.debug) {
-                        console.debug('handshake established');
-                    }
-                    // ping
-                    ws.bingPingInterval = setInterval(() => {
-                        ws.send('{"type":6}\u001E');
-                        // same message is sent back on/after 2nd time as a pong
-                    }, 15 * 1000);
-                    resolve(ws);
-                    return;
-                }
-                if (this.debug) {
-                    console.debug(JSON.stringify(messages));
-                    console.debug();
-                }
-            });
-        });
-    }
-
-    static cleanupWebSocketConnection(ws) {
-        clearInterval(ws.bingPingInterval);
-        ws.close();
-        ws.removeAllListeners();
-    }
-
     async sendMessage(
         message,
         opts = {},
@@ -318,20 +68,22 @@ export default class BingAIClient {
             conversationSignature,
             clientId,
             plugins,
+            accountType,
+            systemMessage,
         } = opts;
+        systemMessage = systemMessage || this.options.systemMessage;
 
         const {
             invocationId = 0,
-            systemMessage,
             toneStyle,
-            modelVersion,
+            persona,
             context = jailbreakConversationId ? process.env.CONTEXT : null,
             parentMessageId = jailbreakConversationId === true ? crypto.randomUUID() : null,
             abortController = new AbortController(),
         } = opts;
 
         if (jailbreakConversationId || !conversationSignature || !conversationId || !clientId) {
-            const createNewConversationResponse = await this.createNewConversation();
+            const createNewConversationResponse = await this.#createNewConversation();
             if (this.debug) {
                 console.debug(createNewConversationResponse);
             }
@@ -421,8 +173,9 @@ export default class BingAIClient {
         const imageURL = opts?.imageURL;
         const imageBase64 = imageURL ? await BingAIClient.getBase64FromImageUrl(imageURL) : opts?.imageBase64;
         const imageUploadResult = imageBase64 ? await this.uploadImage(imageBase64) : undefined;
-        const noSearch = plugins.search === false ? 'nosearchall' : undefined;
-        plugins = await BingAIClient.#resolvePlugins(plugins);
+        const noSearch = plugins?.search === false ? 'nosearchall' : undefined;
+        plugins = BingAIClient.#resolvePlugins(plugins);
+        accountType = BingAIClient.#resolveAccountType(accountType);
         const webSocketParameters = {
             message,
             invocationId,
@@ -431,13 +184,16 @@ export default class BingAIClient {
             clientId,
             conversationId,
             toneStyle,
-            modelVersion,
             ...imageUploadResult && { imageUploadResult },
             plugins,
+            useBase64: opts.useBase64,
+            useUserSuffixMessage: opts.useUserSuffixMessage,
             noSearch,
+            persona,
+            accountType,
         };
 
-        const ws = await this.createWebSocketConnection(conversationSignature);
+        const ws = await this.#createWebSocketConnection(conversationSignature);
 
         ws.on('error', (error) => {
             console.error(error);
@@ -445,7 +201,7 @@ export default class BingAIClient {
             abortController.abort();
         });
 
-        const userWebsocketRequest = BingAIClient.createUserWebsocketRequest(webSocketParameters);
+        const userWebsocketRequest = BingAIClient.#createUserWebsocketRequest(webSocketParameters);
 
         if (previousMessagesFormatted) {
             userWebsocketRequest.arguments[0].previousMessages.push({
@@ -483,7 +239,7 @@ export default class BingAIClient {
         const {
             message: reply,
             conversationExpiryTime,
-        } = await this.createMessagePromise(ws, abortController, opts);
+        } = await this.#createMessagePromise(ws, abortController, opts);
 
         const replyMessage = {
             id: crypto.randomUUID(),
@@ -516,15 +272,94 @@ export default class BingAIClient {
         return returnData;
     }
 
-    /**
-     * Encodes strings from UTF-8 to Base64.
-     * @param {String} text Text that should be encoded into base64 from UTF-8.
-     * @returns {String} Base64 encoded string.
-     */
-    static convertTextToBase64(text) {
-        const base64String = Buffer.from(text, 'utf-8').toString('base64');
+    async #createNewConversation() {
+        this.headers = {
+            accept: 'application/json',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+            cookie: this.options.cookies || (this.options.userToken ? `_U=${this.options.userToken}` : undefined),
+        };
+        // filter undefined values
+        this.headers = Object.fromEntries(
+            Object.entries(this.headers)
+                .filter(([, value]) => value !== undefined),
+        );
 
-        return base64String;
+        const fetchOptions = {
+            headers: this.headers,
+        };
+        if (this.options.proxy) {
+            fetchOptions.dispatcher = new ProxyAgent(this.options.proxy);
+        } else {
+            fetchOptions.dispatcher = new Agent({ connect: { timeout: 30_000 } });
+        }
+        const turingCreateURL = new URL(`${this.options.host}/turing/conversation/create`);
+        const searchParams = new URLSearchParams({
+            bundleVersion: '1.1381.15',
+        });
+        turingCreateURL.search = searchParams.toString();
+        const response = await fetch(turingCreateURL, fetchOptions);
+        const bodyString = await response.text();
+        try {
+            const body = JSON.parse(bodyString);
+            body.conversationSignature = response.headers.get('x-sydney-encryptedconversationsignature');
+            return body;
+        } catch (err) {
+            throw new Error('/turing/conversation/create: failed to parse response body.\n');
+        }
+    }
+
+    async #createWebSocketConnection(conversationSignature) {
+        return new Promise((resolve, reject) => {
+            const ws = new WebSocket(
+                `wss://sydney.bing.com/sydney/ChatHub?sec_access_token=${encodeURIComponent(conversationSignature)}`,
+                { headers: this.headers },
+            );
+
+            ws.on('error', err => reject(err));
+
+            ws.on('open', () => {
+                if (this.debug) {
+                    console.debug('performing handshake');
+                }
+                ws.send('{"protocol":"json","version":1}\u001E');
+            });
+
+            ws.on('close', () => {
+                if (this.debug) {
+                    console.debug('disconnected');
+                }
+            });
+
+            ws.on('message', (data) => {
+                const objects = data.toString().split('\u001E');
+                const messages = objects.map((object) => {
+                    try {
+                        return JSON.parse(object);
+                    } catch (error) {
+                        return object;
+                    }
+                }).filter(message => message);
+                if (messages.length === 0) {
+                    return;
+                }
+                if (typeof messages[0] === 'object' && Object.keys(messages[0]).length === 0) {
+                    if (this.debug) {
+                        console.debug('handshake established');
+                    }
+                    // ping
+                    ws.bingPingInterval = setInterval(() => {
+                        ws.send('{"type":6}\u001E');
+                        // same message is sent back on/after 2nd time as a pong
+                    }, 15 * 1000);
+                    resolve(ws);
+                    return;
+                }
+                if (this.debug) {
+                    console.debug(JSON.stringify(messages));
+                    console.debug();
+                }
+            });
+        });
     }
 
     /**
@@ -532,7 +367,7 @@ export default class BingAIClient {
      * @param {Object} webSocketParameters Contains parameters necessary for websocket creation.
      * @returns {Object} Object that contains all necessary properties for sending the user message.
      */
-    static createUserWebsocketRequest(webSocketParameters) {
+    static #createUserWebsocketRequest(webSocketParameters) {
         const {
             message,
             invocationId,
@@ -541,52 +376,54 @@ export default class BingAIClient {
             clientId,
             conversationId,
             toneStyle,
-            modelVersion,
             imageUploadResult = undefined,
             plugins,
+            useBase64,
+            useUserSuffixMessage,
             noSearch,
+            persona,
+            accountType,
         } = webSocketParameters;
-        let toneOption;
-        if (toneStyle === 'creative') {
-            toneOption = 'h3imaginative';
-        } else if (toneStyle === 'precise') {
-            toneOption = 'h3precise';
-        } else if (toneStyle === 'fast') {
-            // new "Balanced" mode, allegedly GPT-3.5 turbo
-            toneOption = 'galileo';
-        } else {
-            // old "Balanced" mode
-            toneOption = 'harmonyv3';
-        }
-        const modelVersionString = this.#resolveModelVersion(modelVersion);
+
         const imageBaseURL = 'https://www.bing.com/images/blob?bcid=';
+        const pluginIds = plugins.map(plugin => ({ id: plugin.id, category: 1 })).filter(Boolean);
+        const pluginOptionSets = plugins.map(plugin => plugin.optionSet).filter(Boolean);
+        const personaString = this.#resolvePersona(persona);
+        const tone = this.#resolveTone(toneStyle, accountType);
+
+        let userMessageSuffix;
+        if (useUserSuffixMessage === true) {
+            if (jailbreakConversationId) {
+                userMessageSuffix = useBase64
+                    ? 'Q29udGludWUgdGhlIGNvbnZlcnNhdGlvbiBpbiBjb250ZXh0LiBBc3Npc3RhbnQ6'
+                    : 'Continue the conversation in context. Assistant:';
+            } else {
+                userMessageSuffix = message;
+            }
+        }
 
         const userWebsocketRequest = {
             arguments: [
                 {
-                    source: 'cib',
+                    source: 'cib-ccp',
                     optionsSets: [
                         'nojbfedge', // Not included in standard message, but won't work without.
                         'nlu_direct_response_filter',
                         'deepleo',
                         'disable_emoji_spoken_text',
                         'responsible_ai_policy_235',
-                        // "enablemm",
+                        // 'enablemm',
                         'dv3sugg',
-                        // "autosave",
-                        'iyxapbing',
-                        'iycapbing',
-                        toneOption,
-                        'spktxtibmoff',
-                        'enelecintl',
-                        'gndelec',
-                        'gndlogcf',
-                        'gptvmodel2',
+                        // 'autosave',
+                        'uquopt',
+                        'bicfluxv2',
+                        'langdtwb',
+                        'fluxprod',
                         'eredirecturl',
-                        'clgalileo',
-                        'gencontentv3',
-                        ...(modelVersionString !== '' ? [modelVersionString] : []),
+                        ...(toneStyle === 'turbo' && accountType === 'free' ? ['gpt4tmncnp'] : []),
+                        ...(personaString !== '' ? [personaString] : []),
                         ...(noSearch !== undefined ? [noSearch] : []),
+                        ...pluginOptionSets,
                     ],
                     allowedMessageTypes: [
                         'ActionRequest',
@@ -594,48 +431,28 @@ export default class BingAIClient {
                         'Context',
                         'InternalSearchQuery',
                         'InternalSearchResult',
-                        // 'Disengage', unwanted
+                        'InternalContentDescription',
                         'InternalLoaderMessage',
                         'Progress',
-                        // 'RenderCardRequest', not useful
-                        // 'AdsQuery', unwanted
-                        // 'SemanticSerp',// usually not encountered, related to semantic web search
                         'GenerateContentQuery',
                         'SearchQuery',
+                        'GeneratedCode',
                     ],
-                    sliceIds: [
-                        'cruiseenableux',
-                        'adssqovr',
-                        'cruiseenable',
-                        'e2eperf',
-                        'arankc_1_9_9',
-                        'rankcf',
-                        'multlingcf',
-                        'stibmoff',
-                        'caccnctat3',
-                        'styleoffwpt',
-                        'preall20',
-                        '1117gndelec',
-                        '1115rai289s0',
-                        '117invocmaxs0',
-                        '1025gptv_v2',
-                        'fluxnosearch',
-                        '1115fluxv14l',
-                        'codecreatorcf',
-                        'cacmuidarb',
-                    ],
-                    plugins,
+                    sliceIds: [],
+                    plugins: pluginIds,
                     traceId: genRanHex(32),
+                    gptId: persona,
                     isStartOfSession: invocationId === 0,
                     message: {
                         ...imageUploadResult
-                            && { imageUrl: `${imageBaseURL}${imageUploadResult.blobId}` },
+                        && { imageUrl: `${imageBaseURL}${imageUploadResult.blobId}` },
                         ...imageUploadResult
-                            && { originalImageUrl: `${imageBaseURL}${imageUploadResult.processBlobId}` },
+                        && { originalImageUrl: `${imageBaseURL}${imageUploadResult.blobId}` },
                         author: 'user',
-                        text: message,
-                        messageType: jailbreakConversationId ? 'SearchQuery' : 'Chat',
+                        text: useUserSuffixMessage ? userMessageSuffix : message,
+                        messageType: 'Chat',
                     },
+                    tone,
                     conversationSignature,
                     participant: {
                         id: clientId,
@@ -652,17 +469,137 @@ export default class BingAIClient {
         return userWebsocketRequest;
     }
 
-    static #resolveModelVersion(modelVersion) {
-        let optionSetString = '';
-        switch (modelVersion) {
-            case 'gpt-4 turbo':
-                optionSetString = 'gpt4t';
+    /**
+     * Resolves the accountType and returns the string to use for further usage.
+     * @param {String} accountType String description of account type.
+     * @returns {String} The resolved account type to use.
+     */
+    static #resolveAccountType(accountType) {
+        let resolvedAccountType;
+        switch (accountType) {
+            case 'pro':
+                resolvedAccountType = 'pro';
                 break;
+            case 'free':
             default:
-                optionSetString = '';
+                resolvedAccountType = 'free';
         }
 
-        return optionSetString;
+        return resolvedAccountType;
+    }
+
+    /**
+     * This method converts persona names from simple names to technical names.
+     * @param {String | undefined} persona Simple name of the persona to use.
+     * @returns {String} Technical name of the persona to use.
+     */
+    static #resolvePersona(persona) {
+        let personaString = '';
+        switch (persona) {
+            case 'designer':
+                personaString = 'ai_persona_designer_gpt';
+                break;
+            case 'travel':
+                personaString = 'flux_vacation_planning_helper_v14';
+                break;
+            case 'cooking':
+                personaString = 'flux_cooking_helper_v14';
+                break;
+            case 'fitness':
+                personaString = 'flux_fitness_helper_v14';
+                break;
+            case 'copilot':
+                personaString = 'fluxcopilot';
+                break;
+            case 'sydney':
+                personaString = 'fluxsydney';
+                break;
+            default:
+                personaString = '';
+        }
+
+        return personaString;
+    }
+
+    /**
+     * Resolves the id and optionSet value of the plugins and returns an array to be used for the request.
+     * @param {Object} plugins Object containing the plugins to use as strings.
+     * @returns {Object[]} The resolved array of plugin objects that can be used later.
+     */
+    static #resolvePlugins(plugins) {
+        const pluginLookup = {
+            codeInterpreter: {
+                optionSet: 'codeint',
+            },
+            instacart: {
+                id: '46664d33-1591-4ce8-b3fb-ba1022b66c11',
+                optionSet: '0A402EDC',
+            },
+            kayak: {
+                id: 'd6be744c-2bd9-432f-95b7-76e103946e34',
+                optionSet: 'C0BB4EAB',
+            },
+            klarna: {
+                id: '5f143ea3-8c80-4efd-9515-185e83b7cf8a',
+                optionSet: '606E9E5D',
+            },
+            openTable: {
+                id: '543a7b1b-ebc6-46f4-be76-00c202990a1b',
+                optionSet: 'E05D72DE',
+            },
+            search: {
+                id: 'c310c353-b9f0-4d76-ab0d-1dd5e979cf68',
+            },
+            shop: {
+                id: '39e3566a-d481-4d99-82b2-6d739b1e716e',
+                hex: '2E842A93',
+            },
+            suno: {
+                id: '22b7f79d-8ea4-437e-b5fd-3e21f09f7bc1',
+                optionSet: '014CB21D',
+            },
+        };
+        let resolvedPlugins = [];
+        if (plugins) {
+            const keys = Object.keys(plugins);
+            const filteredPlugins = keys.filter(key => plugins[key]);
+            for (const plugin of filteredPlugins) {
+                const pluginData = pluginLookup[plugin];
+                if (pluginData) {
+                    resolvedPlugins.push(pluginData);
+                }
+            }
+        } else {
+            resolvedPlugins = [];
+        }
+
+        return resolvedPlugins;
+    }
+
+    /**
+     * This method converts toneStyles from simple names to technical names.
+     * @param {String | undefined} toneStyle Simple name of the tone to use.
+     * @param {String} accountType Account type which influences modes.
+     * @returns {String} Technical name of the tone to use.
+     */
+    static #resolveTone(toneStyle, accountType) {
+        let tone;
+        switch (toneStyle) {
+            case 'turbo':
+                tone = 'Creative';
+                break;
+            case 'precise':
+                tone = 'Precise';
+                break;
+            case 'balanced':
+                tone = 'Balanced';
+                break;
+            case 'creative':
+            default:
+                tone = accountType === 'pro' ? 'CreativeClassic' : 'Creative';
+        }
+
+        return tone;
     }
 
     /**
@@ -672,7 +609,7 @@ export default class BingAIClient {
      * @param {Object} opts Parameter of "sendMessage" method containing various properties.
      * @returns {Promise} A new message promise that contains the final reply.
      */
-    createMessagePromise(ws, abortController, opts) {
+    #createMessagePromise(ws, abortController, opts) {
         if (typeof opts.onProgress !== 'function') {
             opts.onProgress = () => { };
         }
@@ -719,7 +656,7 @@ export default class BingAIClient {
                             return;
                         }
                         if (messages[0]?.contentType === 'IMAGE') {
-                        // You will never get a message of this type without 'gencontentv3' being on.
+                            // You will never get a message of this type without 'gencontentv3' being on.
                             bicIframe = this.bic.genImageIframeSsr(
                                 messages[0].text,
                                 messages[0].messageId,
@@ -732,25 +669,42 @@ export default class BingAIClient {
                             return;
                         }
                         // Usable later when displaying internal processes, but should be discarded for now.
-                        if (messages[0]?.messageType === 'InternalLoaderMessage'
+                        if (messages[0]?.messageType === 'GenerateContentQuery'
+                            || messages[0]?.messageType === 'InternalContentDescription'
+                            || messages[0]?.messageType === 'InternalLoaderMessage'
                             || messages[0]?.messageType === 'InternalSearchQuery'
                             || messages[0]?.messageType === 'InternalSearchResult'
-                            || messages[0]?.messageType === 'GenerateContentQuery'
-                            || messages[0]?.messageType === 'RenderCardRequest') {
+                            || (messages[0]?.messageType === 'Progress' && messages[0]?.contentOrigin !== 'CodeInterpreter')
+                            || messages[0]?.messageType === 'RenderCardRequest'
+                            || messages[0]?.messageType === 'GeneratedCode') {
                             return;
                         }
-                        const updatedText = messages[0].text;
-                        if (!updatedText || updatedText === replySoFar) {
+                        if (messages[0]?.contentOrigin === 'CodeInterpreter' && messages[0]?.invocation) {
                             return;
                         }
-                        // get the difference between the current text and the previous text
-                        const difference = updatedText.substring(replySoFar.length);
+                        let loaderMessage;
+                        if (messages[0]?.contentOrigin === 'CodeInterpreter') {
+                            const { columns } = messages[0].adaptiveCards[0].body[0];
+                            loaderMessage = `${messages[0]?.contentOrigin}: *${columns[0].items[0].text} ${columns[1].items[0].text}*\n`;
+                        }
+
+                        const updatedText = messages[0]?.text;
+                        if (!loaderMessage && (!updatedText || updatedText === replySoFar)) {
+                            return;
+                        }
+
+                        let difference;
+                        if (loaderMessage) {
+                            difference = loaderMessage;
+                        } else {
+                            difference = updatedText.substring(replySoFar?.length);
+                        }
                         opts.onProgress(difference);
                         const stopToken = '\n\n[user](#message)';
-                        if (updatedText.trim().endsWith(stopToken)) {
+                        if (updatedText?.trim().endsWith(stopToken)) {
                             stopTokenFound = true;
                             // remove stop token from updated text
-                            replySoFar = updatedText.replace(stopToken, '').trim();
+                            replySoFar = updatedText?.replace(stopToken, '').trim();
                             return;
                         }
                         replySoFar = updatedText;
@@ -795,15 +749,15 @@ export default class BingAIClient {
                         // The moderation filter triggered, so just return the text we have so far
                         if (
                             opts.jailbreakConversationId
-                        && (
-                            stopTokenFound
-                            || event.item.messages[0].topicChangerText
-                            || event.item.messages[0].offense === 'OffenseTrigger'
-                            || (event.item.messages.length > 1 && event.item.messages[1].contentOrigin === 'Apology')
-                        )
+                            && (
+                                stopTokenFound
+                                || event.item.messages[0].topicChangerText
+                                || event.item.messages[0].offense === 'OffenseTrigger'
+                                || (event.item.messages.length > 1 && event.item.messages[1].contentOrigin === 'Apology')
+                            )
                         ) {
                             if (!replySoFar) {
-                                replySoFar = '[Error: The moderation filter triggered. Try again with different wording.]';
+                                replySoFar = 'I need some time to process your message. Please wait a moment.';
                             }
                             eventMessage.adaptiveCards[0].body[0].text = replySoFar;
                             eventMessage.text = replySoFar;
@@ -811,7 +765,7 @@ export default class BingAIClient {
                             delete eventMessage.suggestedResponses;
                         }
                         if (bicIframe) {
-                        // the last messages will be a image creation event if bicIframe is present.
+                            // the last messages will be a image creation event if bicIframe is present.
                             let i = messages.length - 1;
                             while (eventMessage?.contentType === 'IMAGE' && i > 0) {
                                 eventMessage = messages[i -= 1];
@@ -828,7 +782,7 @@ export default class BingAIClient {
                             }
                         }
                         if ((opts.showSuggestions === false || opts.useBase64 === true)
-                                && eventMessage.suggestedResponses) {
+                            && eventMessage.suggestedResponses) {
                             delete eventMessage.suggestedResponses;
                         }
                         resolve({
@@ -839,7 +793,7 @@ export default class BingAIClient {
                         return;
                     }
                     case 7: {
-                    // [{"type":7,"error":"Connection closed with an error.","allowReconnect":true}]
+                        // [{"type":7,"error":"Connection closed with an error.","allowReconnect":true}]
                         clearTimeout(messageTimeout);
                         this.constructor.cleanupWebSocketConnection(ws);
                         reject(new Error(event.error || 'Connection closed with an error.'));
@@ -882,5 +836,131 @@ export default class BingAIClient {
         }
 
         return orderedMessages;
+    }
+
+    static cleanupWebSocketConnection(ws) {
+        clearInterval(ws.bingPingInterval);
+        ws.close();
+        ws.removeAllListeners();
+    }
+
+    /**
+     * Method to obtain base64 string of the image from the supplied URL.
+     * To be used when uploading an image for image recognition.
+     * @param {string} imageUrl URL of the image to convert to base64 string.
+     * @returns Base64 string of the image from the supplied URL.
+     */
+    static async getBase64FromImageUrl(imageUrl) {
+        let base64String;
+        try {
+            const response = await fetch(imageUrl, { method: 'GET' });
+            if (response.ok) {
+                const imageBlob = await response.blob();
+                const arrayBuffer = await imageBlob.arrayBuffer();
+                const buffer = Buffer.from(arrayBuffer);
+                base64String = buffer.toString('base64');
+            } else {
+                throw new Error(`HTTP error! Error: ${response.error}, Status: ${response.status}`);
+            }
+        } catch (error) {
+            console.error(error);
+        }
+        return base64String;
+    }
+
+    /**
+     * Method to upload an image to blob storage to later be incorporated in the user message.
+     * @param {string} imageBase64 The base64 string of the image to upload to blob storage.
+     * @returns {object} An object containing the "blobId" for the image.
+     */
+    async uploadImage(imageBase64) {
+        let uploadResult;
+        try {
+            const knowledgeRequestBody = {
+                imageInfo: {},
+                knowledgeRequest: {
+                    invokedSkills: ['ImageById'],
+                    subscriptionId: 'Bing.Chat.Multimodal',
+                    invokedSkillsRequestData: { enableFaceBlur: false },
+                    convoData: { convoid: '', convotone: 'Creative' }, // convoId seems to be irrelevant
+                },
+            };
+
+            const formData = new FormData();
+            formData.append('knowledgeRequest', JSON.stringify(knowledgeRequestBody));
+            formData.append('imageBase64', imageBase64);
+
+            const response = await fetch('https://www.bing.com/images/kblob', {
+                headers: {
+                    accept: 'application/json',
+                    cookie: this.options.cookies || `_U=${this.options.userToken}`,
+                    Referer: 'https://www.bing.com/search?q=Bing+AI&showconv=1&FORM=hpcodx',
+                    'Referrer-Policy': 'origin-when-cross-origin',
+                },
+                body: formData,
+                method: 'POST',
+            });
+            if (response.ok) {
+                uploadResult = await response.json();
+            } else {
+                throw new Error(`HTTP error! Error: ${response.error}, Status: ${response.status}`);
+            }
+        } catch (error) {
+            console.error(error);
+        }
+
+        return uploadResult;
+    }
+
+    /**
+     * Encodes strings from UTF-8 to Base64.
+     * @param {String} text Text that should be encoded into base64 from UTF-8.
+     * @returns {String} Base64 encoded string.
+     */
+    static convertTextToBase64(text) {
+        const base64String = Buffer.from(text, 'utf-8').toString('base64');
+
+        return base64String;
+    }
+
+    static getValidIPv4(ip) {
+        const match = !ip
+            || ip.match(/^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(\/([0-9]|[1-2][0-9]|3[0-2]))?$/);
+        if (match) {
+            if (match[5]) {
+                const mask = parseInt(match[5], 10);
+                let [a, b, c, d] = ip.split('.').map(x => parseInt(x, 10));
+                // eslint-disable-next-line no-bitwise
+                const max = (1 << (32 - mask)) - 1;
+                const rand = Math.floor(Math.random() * max);
+                d += rand;
+                c += Math.floor(d / 256);
+                d %= 256;
+                b += Math.floor(c / 256);
+                c %= 256;
+                a += Math.floor(b / 256);
+                b %= 256;
+                return `${a}.${b}.${c}.${d}`;
+            }
+            return ip;
+        }
+        return undefined;
+    }
+
+    /**
+     * Method to obtain a new cookie as an anonymous user. Excessive use may result in a temporary IP ban, so a usual user cookie should be preferred.
+     * However to remedy a potential temporary ban you may delete the "ANON" cookie in the browser storage.
+     * @returns A new cookie. May however be less usable than a regular cookie.
+     */
+    static async getNewCookie() {
+        try {
+            const response = await fetch('https://www.bing.com/turing/conversation/create', { method: 'GET' });
+            const header = response.headers.get('set-cookie');
+            const cookieValue = header.match(/MUIDB=([^;]+)/) ? header.match(/MUIDB=([^;]+)/)[1] : undefined;
+            return cookieValue;
+        } catch (error) {
+            console.error(error);
+        }
+        return undefined;
     }
 }

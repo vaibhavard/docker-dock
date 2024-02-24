@@ -96,7 +96,7 @@ server.post('/conversation', async (request, reply) => {
             // noinspection ExceptionCaughtLocallyJS
             throw invalidError;
         }
-        let clientToUseForMessage ='bing';
+        let clientToUseForMessage = 'bing';
         const clientOptions = filterClientOptions(body.clientOptions, clientToUseForMessage);
         if (clientOptions && clientOptions.clientToUse) {
             clientToUseForMessage = clientOptions.clientToUse;
@@ -114,11 +114,13 @@ server.post('/conversation', async (request, reply) => {
             invocationId,
             jailbreakConversationId,
             toneStyle,
-            modelVersion,
             systemMessage,
             showSuggestions,
             useBase64,
+            useUserSuffixMessage,
             plugins,
+            persona,
+            accountType,
         } = body;
         const messageOptions = {
             conversationId: body.conversationId ? body.conversationId.toString() : undefined,
@@ -133,11 +135,13 @@ server.post('/conversation', async (request, reply) => {
             ...(clientToUseForMessage === 'bing' && { invocationId }),
             ...(clientToUseForMessage === 'bing' && { jailbreakConversationId }),
             ...(clientToUseForMessage === 'bing' && { toneStyle }),
-            ...(clientToUseForMessage === 'bing' && { modelVersion }),
             ...(clientToUseForMessage === 'bing' && { systemMessage }),
             ...(clientToUseForMessage === 'bing' && { showSuggestions }),
             ...(clientToUseForMessage === 'bing' && { useBase64 }),
+            ...(clientToUseForMessage === 'bing' && { useUserSuffixMessage }),
             ...(clientToUseForMessage === 'bing' && { plugins }),
+            ...(clientToUseForMessage === 'bing' && { persona }),
+            ...(clientToUseForMessage === 'bing' && { accountType }),
             onProgress,
             abortController,
         };
