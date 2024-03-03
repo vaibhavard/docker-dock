@@ -128,6 +128,7 @@ server.post('/conversation', async (request, reply) => {
             clientOptions,
             ...(clientToUseForMessage === 'chatgpt' && { context }),
             ...(clientToUseForMessage === 'chatgpt' && { shouldGenerateTitle }),
+            ...(clientToUseForMessage === 'bing' && { context }),
             ...(clientToUseForMessage === 'bing' && { clientId }),
             ...(clientToUseForMessage === 'bing' && { conversationSignature }),
             ...(clientToUseForMessage === 'bing' && { imageBase64 }),
